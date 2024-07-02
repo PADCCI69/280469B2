@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carte 3D de la Presqu'île de Lyon</title>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.css' rel='stylesheet' />
+    <style>
+        body { margin: 0; padding: 0; display: flex; height: 100vh; }
+        #map { flex-grow: 1; }
+        #sidebar { 
+            width: 5cm; 
+            background: white; 
+            padding: 10px; 
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1); 
+            display: flex; 
+            flex-direction: column;
+            height: 100vh;
+            overflow-y: auto;
+            z-index: 1;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 2;
+        }
+        #fileUpload, #toggle3D, #resetFilters, #filterIndependant, #filterNonIndependant {
+            background: #007bff; 
+            color: white; 
+            padding: 10px 20px; 
+            margin-bottom: 10px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+            font-family: Arial, sans-serif; 
+            font-size: 14px; 
+            text-align: center;
+        }
+        #fileUpload:hover, #toggle3D:hover, #resetFilters:hover, #filterIndependant:hover, #filterNonIndependant:hover { 
+            background: #0056b3; 
+        }
+        #legend { 
+            background: white; 
+            padding: 10px; 
+            border-radius: 4px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+            font-family: Arial, sans-serif; 
+            font-size: 12px; 
+            margin-top: 10px; 
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+        .legend-item { 
+            display: flex; 
+            align-items: center; 
+            margin-bottom: 5px; 
+            cursor: pointer; 
+        }
+        .legend-color { 
+            width: 12px; 
+            height: 12px; 
+            margin-right: 5px; 
+            border-radius: 50%; 
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div id="toggle3D">Toggle 3D Buildings</div>
+        <div id="resetFilters">Reset Filters</div>
+        <div id="filterIndependant">Filter Indépendant</div>
+        <div id="filterNonIndependant">Filter Non Indépendant</div>
+        <div id="legend"></div>
+    </div>
+    <div id="map"></div>
+    <div id="controls">
+        <input type="file" id="fileUpload" accept=".csv" />
+    </div>
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js'></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1IjoicGllcnJlLWFudG9pbmVjY2k2OSIsImEiOiJjbHkybXRjZTUxYjhyMmlzMno4bjc5d2Z6In0.1fcdd4c3Cx9PcUYPoJwAkA';
+
+        const categories = {
+            'Cafe Hotel Restaurant': '#FF6347',
+            'Structures de Sante': '#4682B4',
+            'Hygiene Sante Beaute': '#32CD32',
+            'Commerces vacants': '#FFD700',
+            'Alimentaire': '#FFA500',
+            'Services non commerciaux': '#DB7093',
+            'Culture Loisirs': '#00CED1',
+            'Artisanat': '#9370DB',
+            'Mobiliers Electromenagers Decoration': '#1E90FF',
+            'Loisirs marchands': '#FF1493',
+            'Automobile Moto': '#2E8B57',
+            'Equipement de la Personne': '#FF69B4',
+            'Autres Types': '#D2691E',
+            'Bricolage Jardinage': '#8A2BE2',
+            'Services marchands': '#DAA520'
+        };
+
+        const legend = document.getElementById('legend');
+        for (const [category, color] of Object.entries(categories)) {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.dataset.category = category;
+            const colorBox = document.createElement('div');
+            colorBox.className = 'legend-color';
+            colorBox.style.backgroundColor = color;
+            const label = document.createElement('span');
+            label.textContent = category;
+            item.appendChild(colorBox);
+            item.appendChild(label);
+            legend.appendChild(item);
+        }
+
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v11',
+            center: [4.832011, 45.757814],
+            zoom: 15,
+            pitch: 60,
+            bearing: -17.6
+        });
+
+        const nav = new mapboxgl.NavigationControl({ showCompass: true, showZoom: true });
+        map.addControl(nav, 'top-right');
+
+        map.on('load', () => {
+            map.addLayer({
+                'id': '3d-buildings',
+                'source': 'composite',
+                'source-layer': 'building',
+                'filter': ['==', 'extrude', 'true'],
+                'type': 'fill-extrusion',
+                'minzoom': 15,
+                'paint': {
+                    'fill-extrusion-color': '#aaa',
+                    'fill-extrusion-height': [
+                        'interpolate', ['linear'], ['zoom'],
+                        15, 0,
+                        15.05, ['get', 'height']
+                    ],
+                    'fill-extrusion-base': [
+                        'interpolate', ['linear'], ['zoom'],
+                        15, 0,
+                        15.05, ['get', 'min_height']
+                    ],
+                    'fill-extrusion-opacity': 0.6
+                }
+            });
+
+            document.getElementById('toggle3D').addEventListener('click', function() {
+                const visibility = map.getLayoutProperty('3d-buildings', 'visibility');
+                if (visibility === 'visible') {
+                    map.setLayoutProperty('3d-buildings', 'visibility', 'none');
+                } else {
+                    map.setLayoutProperty('3d-buildings', 'visibility', 'visible');
+                }
+            });
+
+            let filterCategory = null;
+            let filterStatus = null;
+
+            document.querySelectorAll('.legend-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const category = this.dataset.category;
+                    filterCategory = filterCategory === category ? null : category;
+                    applyFilters();
+                });
+            });
+
+            document.getElementById('resetFilters').addEventListener('click', function() {
+                filterCategory = null;
+                filterStatus = null;
+                applyFilters();
+            });
+
+            document.getElementById('filterIndependant').addEventListener('click', function() {
+                filterStatus = 'Independant';
+                applyFilters();
+            });
+
+            document.getElementById('filterNonIndependant').addEventListener('click', function() {
+                filterStatus = 'Non Independant';
+                applyFilters();
+            });
+
+            function applyFilters() {
+                let filters = ['all'];
+                if (filterCategory) {
+                    filters.push(['==', ['get', 'Type de commerces'], filterCategory]);
+                }
+                if (filterStatus) {
+                    filters.push(['==', ['get', 'Statut du commerce'], filterStatus]);
+                }
+                console.log('Applying filters:', filters); // Debugging log
+                map.setFilter('unclustered-point', filters.length > 1 ? filters : null);
+                map.setFilter('unclustered-label', filters.length > 1 ? filters : null);
+            }
+
+            document.getElementById('fileUpload').addEventListener('change', function(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                this.style.display = 'none'; // Hide the file upload button
+
+                Papa.parse(file, {
+                    header: true,
+                    dynamicTyping: true,
+                    complete: function(results) {
+                        const data = results.data;
+                        console.log('Parsed CSV data:', data); // Debugging log
+                        const features = data.map(row => ({
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [parseFloat(row.longitude), parseFloat(row.latitude)]
+                            },
+                            properties: row
+                        }));
+
+                        const geojson = {
+                            type: 'FeatureCollection',
+                            features: features
+                        };
+
+                        if (map.getSource('points')) {
+                            map.getSource('points').setData(geojson);
+                        } else {
+                            map.addSource('points', {
+                                type: 'geojson',
+                                data: geojson,
+                                cluster: true,
+                                clusterMaxZoom: 15,
+                                clusterRadius: 50
+                            });
+
+                            map.addLayer({
+                                id: 'clusters',
+                                type: 'circle',
+                                source: 'points',
+                                filter: ['has', 'point_count'],
+                                paint: {
+                                    'circle-color': [
+                                        'step',
+                                        ['get', 'point_count'],
+                                        '#51bbd6',
+                                        100,
+                                        '#f1f075',
+                                        750,
+                                        '#f28cb1'
+                                    ],
+                                    'circle-radius': [
+                                        'step',
+                                        ['get', 'point_count'],
+                                        15,
+                                        100,
+                                        25,
+                                        750,
+                                        35
+                                    ],
+                                    'circle-stroke-width': 1,
+                                    'circle-stroke-color': '#D3D3D3'
+                                }
+                            });
+
+                            map.addLayer({
+                                id: 'cluster-count',
+                                type: 'symbol',
+                                source: 'points',
+                                filter: ['has', 'point_count'],
+                                layout: {
+                                    'text-field': '{point_count_abbreviated}',
+                                    'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+                                    'text-size': 12
+                                }
+                            });
+
+                            map.addLayer({
+                                id: 'unclustered-point',
+                                type: 'circle',
+                                source: 'points',
+                                filter: ['!', ['has', 'point_count']],
+                                paint: {
+                                    'circle-color': [
+                                        'match',
+                                        ['get', 'Type de commerces'],
+                                        'Cafe Hotel Restaurant', '#FF6347',
+                                        'Structures de Sante', '#4682B4',
+                                        'Hygiene Sante Beaute', '#32CD32',
+                                        'Commerces vacants', '#FFD700',
+                                        'Alimentaire', '#FFA500',
+                                        'Services non commerciaux', '#DB7093',
+                                        'Culture Loisirs', '#00CED1',
+                                        'Artisanat', '#9370DB',
+                                        'Mobiliers Electromenagers Decoration', '#1E90FF',
+                                        'Loisirs marchands', '#FF1493',
+                                        'Automobile Moto', '#2E8B57',
+                                        'Equipement de la Personne', '#FF69B4',
+                                        'Autres Types', '#D2691E',
+                                        'Bricolage Jardinage', '#8A2BE2',
+                                        'Services marchands', '#DAA520',
+                                        '#ffffff'
+                                    ],
+                                    'circle-radius': 4,
+                                    'circle-stroke-width': 1,
+                                    'circle-stroke-color': '#D3D3D3'
+                                }
+                            });
+
+                            map.addLayer({
+                                id: 'unclustered-label',
+                                type: 'symbol',
+                                source: 'points',
+                                filter: ['!', ['has', 'point_count']],
+                                layout: {
+                                    'text-field': ['get', 'Nom de l\'enseigne'],
+                                    'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+                                    'text-size': 10,
+                                    'text-offset': [0, 1.5],
+                                    'text-anchor': 'top'
+                                }
+                            });
+
+                            map.on('click', 'clusters', function (e) {
+                                const features = map.queryRenderedFeatures(e.point, {
+                                    layers: ['clusters']
+                                });
+                                const clusterId = features[0].properties.cluster_id;
+                                map.getSource('points').getClusterExpansionZoom(clusterId, function (err, zoom) {
+                                    if (err) return;
+
+                                    map.easeTo({
+                                        center: features[0].geometry.coordinates,
+                                        zoom: zoom
+                                    });
+                                });
+                            });
+
+                            map.on('mouseenter', 'clusters', function () {
+                                map.getCanvas().style.cursor = 'pointer';
+                            });
+                            map.on('mouseleave', 'clusters', function () {
+                                map.getCanvas().style.cursor = '';
+                            });
+
+                            // Move clusters and cluster counts to the top
+                            map.moveLayer('clusters');
+                            map.moveLayer('cluster-count');
+                        }
+                    },
+                    error: function(error) {
+                        console.error("Error reading file:", error);
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
